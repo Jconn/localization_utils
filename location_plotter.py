@@ -50,13 +50,15 @@ class TransformLoggerNode(Node):
                     timeout=Duration(seconds=1.0))
             if self._old_transform is not None and self._old_transform.header.stamp == transform.header.stamp:
                 #TODO: why does this counter need to exist
-                if self.counter < 4: 
+                if self.counter < 10: 
                     self.counter +=1
                 else:
                     logging.info(f"no new measurements, ending{self._old_transform}\n{transform}")
                     self.timer.destroy()
                     plt.show(block=True)
                 return
+
+            self.counter = 0 
             self._old_transform = transform
             self.stats['x'].append(transform.transform.translation.x)
             self.stats['y'].append(transform.transform.translation.y)
@@ -78,9 +80,9 @@ class TransformLoggerNode(Node):
         self.ax.set_xlabel('X')
         self.ax.set_ylabel('Y')
         self.ax.set_zlabel('Z')
-        self.ax.set_xlim3d([-10.0, 10.0])
-        self.ax.set_ylim3d([-10.0, 10.0])
-        self.ax.set_zlim3d([-10.0, 10.0])
+        self.ax.set_xlim3d([-7.0, 7.0])
+        self.ax.set_ylim3d([-7.0, 7.0])
+        self.ax.set_zlim3d([-2.0, 2.0])
         #self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'],
         #        label='parametric curve')
         self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'])
@@ -122,9 +124,16 @@ def main(args=None):
         #rclpy.spin(log_node)
         executor.spin()
     except:
-        executor.shutdown()
+        logging.warning(f"hit exception")
+        pass
+        #executor.shutdown()
+    finally:
+        odom_node.plot_data()
+        map_node.plot_data()
+        plt.show(block=True)
         odom_node.destroy_node()
         map_node.destroy_node()
+
 
 if __name__=='__main__':
     main()
