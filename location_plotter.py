@@ -42,7 +42,23 @@ class TransformLoggerNode(Node):
         self.stats['z'] = []
         self.plotting = False
         self._old_transform = None
+        self.counter = 0
         #plt.ion()
+    def is_done(self):
+        return self.counter >= 10
+    def destruction_checker(self):
+        #TODO: why does this counter need to exist
+        if self._old_transform is None:
+            return
+
+        if self.counter < 10: 
+            self.counter +=1
+        else:
+            #logging.info(f"no new measurements, ending{self._old_transform}\n{transform}")
+            logging.info(f"no new measurements, destroying node")
+            self.destroy_timer(self.timer)
+            self.executor.remove_node(self)
+            #self.destroy_node()
 
     def transform_checker(self):
         try:
@@ -50,17 +66,11 @@ class TransformLoggerNode(Node):
                     source_frame=self.source_frame, 
                     time=Time(),
                     timeout=Duration(seconds=1.0))
-            if self._old_transform is not None and self._old_transform.header.stamp == transform.header.stamp:
-                #TODO: why does this counter need to exist
-                if self.counter < 10: 
-                    self.counter +=1
-                else:
-                    #logging.info(f"no new measurements, ending{self._old_transform}\n{transform}")
-                    logging.info(f"no new measurements, destroying node")
-                    self.executor.remove_node(self)
-                    #self.destroy_node()
-                return
 
+            if self._old_transform is not None and (self._old_transform.header.stamp.sec == transform.header.stamp.sec) \
+                and (self._old_transform.header.stamp.nanosec == transform.header.stamp.nanosec):
+                self.destruction_checker()
+                return
             self.counter = 0 
             self._old_transform = transform
             self.stats['x'].append(transform.transform.translation.x)
@@ -71,15 +81,10 @@ class TransformLoggerNode(Node):
             #self.plot_data()
         except Exception as e:
             logging.warning(f"exception {e}")
-            if len(self.stats['x']) > 0:
-                #we have some data, do the plot
-                self.timer.destoy()
-                pass
+            self.destruction_checker()
 
     def update_line(self, num, data, lines):
-        logging.warning(f"updating line {num}")
         #for line, data in zip(lines, dataline):
-        logging.warning(f"{lines}")
         lines[0].set_data_3d(data[0][:num],
                          data[1][:num],
                          data[2][:num])
@@ -106,11 +111,11 @@ class TransformLoggerNode(Node):
         self.ax.set_zlabel('Z')
         self.ax.set_xlim3d([-7.0, 7.0])
         self.ax.set_ylim3d([-7.0, 7.0])
-        self.ax.set_zlim3d([-2.0, 2.0])
+        self.ax.set_zlim3d([-5.0, 5.0])
         data = [self.stats['x'], self.stats['y'], self.stats['z']] 
         #pdb.set_trace()
         self.line_ani = animation.FuncAnimation(self.fig, self.update_line, len(self.stats['x']), 
-                interval=50, blit=False, repeat_delay=5000, fargs=(data, lines))
+                interval=50, blit=False, repeat_delay=2000, fargs=(data, lines), repeat = False)
         #self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'],
         #        label='parametric curve')
         #self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'])
@@ -128,16 +133,19 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-    executor = SingleThreadedExecutor()
+    executor = MultiThreadedExecutor()
     odom_node = TransformLoggerNode('odom', 'base_link', executor=executor)
     map_node = TransformLoggerNode('map', 'base_link', executor=executor)
-    #executor.add_node(odom_node)
+    executor.add_node(odom_node)
     executor.add_node(map_node)
     try:
         #rclpy.spin(log_node)
         while True:
             executor.spin_once()
+            #logging.info(f"num nodes is: {len(executor.get_nodes())}")
             if len(executor.get_nodes()) == 0:
+                break
+            if odom_node.is_done() and map_node.is_done():
                 break
 
     except:
