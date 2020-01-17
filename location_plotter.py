@@ -3,6 +3,10 @@ from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import matplotlib.pyplot as plt
 
+import mpl_toolkits.mplot3d.axes3d as p3
+import mpl_toolkits
+import matplotlib.animation as animation
+
 import rclpy
 from rclpy.time import Time
 from rclpy.node import Node 
@@ -17,14 +21,16 @@ from rclpy.duration import Duration
 
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.executors import SingleThreadedExecutor
+import pdb
 
 class TransformLoggerNode(Node):
-    def __init__(self, target_frame, source_frame):
+    def __init__(self, target_frame, source_frame, executor):
         super().__init__("transform_logger_node")
         #self.mag_sub = self.create_subscription(sensor_msgs.msg.MagneticField,"imu/mag_data", self.mag_data,qos_profile_sensor_data)
         self.timer = self.create_timer(.3, self.transform_checker)
         self.counter = 0 
 
+        self.executor = executor
         self.target_frame = target_frame
         self.source_frame = source_frame
 
@@ -34,13 +40,9 @@ class TransformLoggerNode(Node):
         self.stats['x'] = [] 
         self.stats['y'] = []
         self.stats['z'] = []
-        self.fig = plt.figure()
-        self.ax = self.fig.gca(projection='3d')
-        plt.ion()
+        self.plotting = False
         self._old_transform = None
-
-    def do_plot(self):
-        self.plot_data() 
+        #plt.ion()
 
     def transform_checker(self):
         try:
@@ -53,9 +55,10 @@ class TransformLoggerNode(Node):
                 if self.counter < 10: 
                     self.counter +=1
                 else:
-                    logging.info(f"no new measurements, ending{self._old_transform}\n{transform}")
-                    self.timer.destroy()
-                    plt.show(block=True)
+                    #logging.info(f"no new measurements, ending{self._old_transform}\n{transform}")
+                    logging.info(f"no new measurements, destroying node")
+                    self.executor.remove_node(self)
+                    #self.destroy_node()
                 return
 
             self.counter = 0 
@@ -65,16 +68,37 @@ class TransformLoggerNode(Node):
             self.stats['z'].append(transform.transform.translation.z)
             #logging.info(f"latest transform is {transform}")
 
-            self.plot_data()
-            plt.pause(0.0001)
+            #self.plot_data()
         except Exception as e:
             logging.warning(f"exception {e}")
             if len(self.stats['x']) > 0:
                 #we have some data, do the plot
                 self.timer.destoy()
                 pass
+
+    def update_line(self, num, data, lines):
+        logging.warning(f"updating line {num}")
+        #for line, data in zip(lines, dataline):
+        logging.warning(f"{lines}")
+        lines[0].set_data_3d(data[0][:num],
+                         data[1][:num],
+                         data[2][:num])
+        return lines 
+
     def plot_data(self):
-        self.ax.clear()
+        if self.plotting:
+            #plt.pause(0.0001)
+            return
+
+        self.fig = plt.figure()
+        self.ax = p3.Axes3D(self.fig)
+
+        self.plotting = True
+
+        #self.ax.clear()
+
+        lines = self.ax.plot(self.stats['x'][0:1],self.stats['y'][0:1],self.stats['z'][0:1])
+
 
         self.ax.set_title(f"transform of {self.target_frame} to {self.source_frame}")
         self.ax.set_xlabel('X')
@@ -83,28 +107,17 @@ class TransformLoggerNode(Node):
         self.ax.set_xlim3d([-7.0, 7.0])
         self.ax.set_ylim3d([-7.0, 7.0])
         self.ax.set_zlim3d([-2.0, 2.0])
+        data = [self.stats['x'], self.stats['y'], self.stats['z']] 
+        #pdb.set_trace()
+        self.line_ani = animation.FuncAnimation(self.fig, self.update_line, len(self.stats['x']), 
+                interval=50, blit=False, repeat_delay=5000, fargs=(data, lines))
         #self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'],
         #        label='parametric curve')
-        self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'])
+        #self.ax.plot(self.stats['x'], self.stats['y'], self.stats['z'])
         #self.ax.legend()
-        #plt.pause(0.0001)
-        plt.show()
+        #plt.show(block=False)
 
 
-
-def _main():
-    mpl.rcParams['legend.fontsize'] = 10
-
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    theta = np.linspace(-4 * np.pi, 4 * np.pi, 100)
-    z = np.linspace(-2, 2, 100)
-    r = z**2 + 1
-    x = r * np.sin(theta)
-    y = r * np.cos(theta)
-    ax.plot(x, y, z, label='parametric curve')
-    ax.legend()
-    plt.show()
 
 
 def main(args=None): 
@@ -115,21 +128,27 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-    odom_node = TransformLoggerNode('odom', 'base_link')
-    map_node = TransformLoggerNode('map', 'base_link')
     executor = SingleThreadedExecutor()
-    executor.add_node(odom_node)
+    odom_node = TransformLoggerNode('odom', 'base_link', executor=executor)
+    map_node = TransformLoggerNode('map', 'base_link', executor=executor)
+    #executor.add_node(odom_node)
     executor.add_node(map_node)
     try:
         #rclpy.spin(log_node)
-        executor.spin()
+        while True:
+            executor.spin_once()
+            if len(executor.get_nodes()) == 0:
+                break
+
     except:
         logging.warning(f"hit exception")
         pass
         #executor.shutdown()
     finally:
+        logging.warning(f"cleaning up")
         odom_node.plot_data()
         map_node.plot_data()
+        plt.pause(1)
         plt.show(block=True)
         odom_node.destroy_node()
         map_node.destroy_node()
